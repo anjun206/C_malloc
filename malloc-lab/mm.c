@@ -8,6 +8,21 @@
  *
  * NOTE TO STUDENTS: Replace this header comment with your own header
  * comment that gives a high level description of your solution.
+ * 
+ * mm.c 파일외에는 손댈 필요 없다고 한다
+ * 잘 구현되었는지는 mdriver.c 실행해서 확인하면 된다
+ * memlib.c의 경우는 sbrk처럼 힙을 흉내낸거라고 한다
+ * 힙을 늘릴땐 mem_sbrk등을 쓰면 된단다
+ * 말곤 다 시간/사이클 측정용이니 냅두면 OK
+ * 
+ * memlib에서 지원해주는 함수
+ * - mem_sbrk(int incr) incr만큼 증가 (단 sbrk랑 달리 양수만)
+ * - mem_reset_brk 모의 힙을 시작으로 되돌림
+ * - mem_heap_lo 모의 힙의 첫 바이트 주소 반환
+ * - mem_heap_hi 모의 힙의 마지막 바이트 주소 반환 (확장 후 바뀜)
+ * - meme_pagesize 시스템 크기 반환
+ * 
+ * 걍 mem_sbrk만 생각하면 될듯?
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +59,10 @@ team_t team = {
 
 /*
  * mm_init - initialize the malloc package.
+ *
+ * 힙을 빈 상태로 초기화
+ * 
+ * 실패 시 음수반환, 성공시 0
  */
 int mm_init(void)
 {
@@ -53,6 +72,11 @@ int mm_init(void)
 /*
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
+ * 
+ * 1. 요청 크기 보정
+ * 2. 적합 블록 탐색
+ * 3. 배치
+ * 4. 힙 확장 (필요시)
  */
 void *mm_malloc(size_t size)
 {
@@ -69,6 +93,10 @@ void *mm_malloc(size_t size)
 
 /*
  * mm_free - Freeing a block does nothing.
+ *
+ * 블록의 할당 비트 가용으로 변경
+ * 인접 블록과 병합
+ * 가용 리스트 삽입
  */
 void mm_free(void *ptr)
 {
@@ -76,6 +104,14 @@ void mm_free(void *ptr)
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ *
+ * 특수 케이스 : 포인터 NULL
+ * 
+ * 같은 자리 블록 축소/분할
+ * 뒤 블록 가용이면 병합
+ * 불가하면 새 블록 받아 복사 후 기존 블록 mm_free
+ * 
+ * 복사 크기는 기존 페이로드 최솟값
  */
 void *mm_realloc(void *ptr, size_t size)
 {
