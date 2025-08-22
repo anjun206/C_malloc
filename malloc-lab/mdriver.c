@@ -6,6 +6,25 @@
  *
  * Copyright (c) 2002, R. Bryant and D. O'Hallaron, All rights reserved.
  * May not be used, modified, or copied without permission.
+ * 
+ * ※ 빌드 해서 테스트 보는 법 ※
+ * malloc-lab 디렉터리로 이동
+ * 
+ * make clean
+ * make
+ * 
+ * 성공하면 mdriver생김
+ * 
+ * 빠른 단일 테스트
+ * ./mdriver -V -f short1-bal.rep
+ * ./mdriver -V -f short2-bal.rep
+ * 
+ * 전체 테스트
+ * ./mdriver -v
+ * 
+ * 자동 채점?
+ * ./mdriver -g
+ * 
  */
 #include <stdio.h>
 #include <stdlib.h>
