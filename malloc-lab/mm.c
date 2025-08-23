@@ -58,6 +58,12 @@ team_t team = {
 
 #define MAX(x, y) ((x) > (y)? (x) : (y))
 
+/* 
+ * size = 블록의 전체 크기
+ * alloc = 할당 상태 비트
+ * p = 일반 포인터 (헤더/푸터 가리킬 때 씀)
+ * bp = 블록 포인터 (페이로드의 시작 주소)
+ */
 #define PACK(size, alloc) ((size) | (alloc))
 
 #define GET(p)        (*(unsigned int *)(p))
@@ -77,6 +83,22 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
+/* 
+ * PACK = alloc에 0또는 1 넣어서 하위 3비트에 함께저장
+ * GET,PUT = p에서 WSIZE 읽기/쓰기
+ * GET_SIZE,ALLOC = 헤더/푸터의 워드 값에서 크기와 할당 비트만 추출
+ * HDRP = 현재 블록의 헤더 주소
+ * FTRP = 현재 블록의 푸터 주소
+ * NEXT_BLKP = 다음 블록의 bp
+ * PREV_BLKP = 이전 블록의 bp (이전 블록 할당이면 불가)
+ * ALIGN = 임의 크기 size를 8바이트 배수에 맞추기 [예) ALIGN(13) = 16]
+ * SIZE_T_SIZE = ?
+ */
+
+static char *mem_heap;        /* 힙 영역 첫번째 바이트 포인터 */
+static char *mem_brk;         /* 힙영역 마지막+1 바이트 포인터 */
+static char *mem_max_addr;    /* 사용 가능 최대 합법 주소+1 바이트 포인터 */
+                              /* heap_lo <= 사용가능 합법 주소 < mem_max_addr */
 /*
  * mm_init - initialize the malloc package.
  *
@@ -86,9 +108,44 @@ team_t team = {
  */
 int mm_init(void)
 {
+    if ((mem_heap = sbrk(4*WSIZE)) == (void *)-1)
+        return -1;
+    PUT(mem_heap, 0);
+    PUT(mem_heap + (1*WSIZE), PACK(DSIZE, 1));  // 프롤로그 헤더
+    PUT(mem_heap + (2*WSIZE), PACK(DSIZE, 1));  // 프롤로그 푸터
+                                                // 실제 힙 확장하고 사용자 메모리 들어갈 곳
+    PUT(mem_heap + (3*WSIZE), PACK(0, 1));      // 에필로그 헤더 (힙 영역 마무리)
+    mem_heap += (2*WSIZE);
 
+    if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
+        return -1;
     return 0;
 }
+
+/* 
+ * 힙 익스텐드  ㄱㄱ
+ * 사이즈... 어디서 떼오더라?
+ * 
+ */
+
+static void *extend_heap(size_t words)
+{
+    char *bp;
+    size_t size;
+
+    size = (words % 2) ? (words+1) * WSIZE : words * WSIZE;
+    if ((long)(bp = mem_sbrk(size)) == -1)
+        return NULL;
+
+// init 할때랑 동일
+    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));
+
+// 병합
+return coalesce(bp);
+}
+
 
 /*
  * mm_malloc - Allocate a block by incrementing the brk pointer.
@@ -101,16 +158,52 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    int newsize = ALIGN(size + SIZE_T_SIZE);
-    void *p = mem_sbrk(newsize);
-    if (p == (void *)-1)
+    size_t asize;
+    size_t extendsize;
+    char *bp;
+
+    if (size == 0)
         return NULL;
+
+    if (size <= DSIZE)
+        asize = 2*DSIZE;
     else
-    {
-        *(size_t *)p = size;
-        return (void *)((char *)p + SIZE_T_SIZE);
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE);
+
+    if ((bp = find_fit(asize)) != NULL) {
+        place(bp, asize);
+        return bp;
     }
+
+    extendsize = MAX(asize, CHUNKSIZE);
+    if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
+        return NULL;
+    place(bp, asize);
+    return bp;
 }
+
+/* 
+ * 흐음...
+ * 아쉽게도 find_fit은 직접 구현하라고 한다
+ * 난 나중에 세그뭐시기 리스트로 구현할거기에
+ * firstfit 사용할거다
+ */
+static void *find_fit(size_t asize) {
+    char *bp = mem_heap;
+
+}
+
+
+/* 
+ * 으음...
+ * place도 직접 구현하는 거였다
+ * 
+ * 요청 블록을 가용 블록의 시작 부분에 배치해야 한다
+ * 나머지 부분의 크기가 최소블록의 크기와 같거나 크면 분할한다
+ */
+static void place(void *bp, size_t asize) {
+}
+
 
 /*
  * mm_free - Freeing a block does nothing.
@@ -121,7 +214,55 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    size_t size = GET_SIZE(HDRP(ptr));
+
+    PUT(HDRP(ptr), PACK(size, 0));
+    PUT(FTRP(ptr), PACK(size, 0));
+    coalesce(ptr);
 }
+
+/* 
+ * 병합도 구현
+ * coalesce = 인접 가용 블록 합쳐 큰 가용블록으로 변환
+ */
+
+static void *coalesce(void *bp)
+{
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t size = GET_SIZE(HDRP(bp));
+
+    // case 1   앞뒤 둘다 가용 불가
+    if (prev_alloc && next_alloc) {
+        return bp;
+    }
+
+    // case 2  다음 블록 가용가능
+        else if (prev_alloc && !next_alloc) {
+            size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+            PUT(HDRP(bp), PACK(size, 0));
+            PUT(FTRP(bp), PACK(size, 0));
+        }
+
+    // case 3  이전 블록 가용가능
+        else if (!prev_alloc && next_alloc) {
+            size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+            PUT(FTRP(bp), PACK(size, 0));
+            PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+            bp = PREV_BLKP(bp);
+        }
+
+    // case 4  앞뒤 둘다 가용 가능
+        else {
+            size += GET_SIZE(HDRP(PREV_BLKP(bp))) +
+                    GET_SIZE(HDRP(NEXT_BLKP(bp)));
+            PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
+            PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
+            bp = PREV_BLKP(bp);
+    }
+    return bp;
+}
+
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
