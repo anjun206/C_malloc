@@ -1,5 +1,8 @@
 {
     "files.associations": {
-        "unistd.h": "c"
+        "unistd.h": "c",
+        "stdlib.h": "c",
+        "assert.h": "c",
+        "string.h": "c"
     }
 }
